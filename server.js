@@ -11,6 +11,7 @@ app.use(express.json());
 const wss = new WebSocket.Server({ port: 5800, host: "0.0.0.0" });
 const espCamWss = new WebSocket.Server({ port: 5900, host: "0.0.0.0" });
 let espSocket = null; // Track the ESP module's connection
+let espCamSocket = null; // Track the ESP module's connection
 let frontendSocket = null; // Track the frontend connection
 
 espCamWss.on("connection", (socket) => {
@@ -34,6 +35,7 @@ wss.on("connection", (socket, req) => {
 
   // Assign connection roles based on a query parameter
   socket.on("message", (message) => {
+    // console.log(message)
     try {
       const data = JSON.parse(message);
       if (data) {
@@ -43,9 +45,15 @@ wss.on("connection", (socket, req) => {
         } else if (data.type === "frontend") {
           console.log("Frontend connected");
           frontendSocket = socket;
+        } else if (data.type === "esp-cam") {
+          console.log("esp-cam connected");
+          espCamSocket = socket;
         } else if (data.type === "control" && espSocket) {
           console.log(`Control code received: ${data.controlCode}`);
           espSocket.send(JSON.stringify({ controlCode: data.controlCode }));
+        } else if (data.type === "pan-tilt" && espCamSocket) {
+          console.log(`pan-tilt code received: ${data.panTilt}`);
+          espCamSocket.send(JSON.stringify({ panTilt: data.panTilt }));
         } else if (data.type === "dummy" && frontendSocket) {
           console.log(`dummy data received: ${data.payload}`);
           frontendSocket.send(
