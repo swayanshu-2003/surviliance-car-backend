@@ -7,67 +7,98 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// WebSocket server
+// WebSocket servers
 const wss = new WebSocket.Server({ port: 5800, host: "0.0.0.0" });
 const espCamWss = new WebSocket.Server({ port: 5900, host: "0.0.0.0" });
-let espSocket = null; // Track the ESP module's connection
-let espCamSocket = null; // Track the ESP module's connection
-let frontendSocket = null; // Track the frontend connection
 
+let espSocket = null; // ESP module connection
+let espCamSocket = null; // ESP-CAM connection
+let espPanTiltSocket = null; // Pan-Tilt ESP connection
+let espButton = null; // Button ESP connection
+let espSensor = null; // Button ESP connection
+let frontendSocket = null; // Frontend connection
+
+// ESP-CAM WebSocket server
 espCamWss.on("connection", (socket) => {
-  console.log("New ESP32 WebSocket connection");
+  console.log("New ESP32-CAM WebSocket connection");
 
   socket.on("message", (message) => {
-
     espCamWss.clients.forEach((client) => {
       if (client.readyState === WebSocket.OPEN) {
-        client.send(message); // Forward the image data
+        try {
+          client.send(message);
+        } catch (err) {
+          console.error("Error sending message to ESP-CAM clients:", err);
+        }
       }
     });
   });
+
   socket.on("close", () => {
-    console.log("ESP-cam module disconnected");
+    console.log("ESP-CAM module disconnected");
+  });
+
+  socket.on("error", (err) => {
+    console.error("Error with ESP-CAM socket:", err);
   });
 });
 
+// Main WebSocket server
 wss.on("connection", (socket, req) => {
   console.log("New WebSocket connection");
 
-  // Assign connection roles based on a query parameter
-  socket.on("message", (message) => {
-    // console.log(message)
+  socket.on("message", async (message) => {
     try {
       const data = JSON.parse(message);
+      console.log(data);
       if (data) {
         if (data.type === "esp") {
           console.log("ESP module connected");
           espSocket = socket;
+        } else if (data.type === "pan-tilt-esp") {
+          console.log("Pan-Tilt ESP connected");
+          espPanTiltSocket = socket;
+        } else if (data.type === "sensor-esp") {
+          console.log("sensor ESP connected");
+          espSensor = socket;
+        } else if (data.type === "button-esp") {
+          console.log("Button ESP connected");
+          espButton = socket;
         } else if (data.type === "frontend") {
           console.log("Frontend connected");
           frontendSocket = socket;
-        } else if (data.type === "esp-cam") {
-          console.log("esp-cam connected");
-          espCamSocket = socket;
         } else if (data.type === "control" && espSocket) {
           console.log(`Control code received: ${data.controlCode}`);
-          espSocket.send(JSON.stringify({ controlCode: data.controlCode }));
-        } else if (data.type === "pan-tilt" && espCamSocket) {
-          console.log(`pan-tilt code received: ${data.panTilt}`);
-          espCamSocket.send(JSON.stringify({ panTilt: data.panTilt }));
-        } else if (data.type === "dummy" && frontendSocket) {
-          console.log(`dummy data received: ${data.payload}`);
-          frontendSocket.send(
-            JSON.stringify({ type: "dummy", payload: data.payload })
-          );
+          try {
+            espSocket.send(JSON.stringify({ controlCode: data.controlCode }));
+          } catch (err) {
+            console.error("Error sending control code:", err);
+          }
+        } else if (data.type === "pan-tilt" && espPanTiltSocket) {
+          console.log(`Pan-Tilt code received: ${data.panTilt}`);
+          try {
+            espPanTiltSocket.send(JSON.stringify({ panTilt: data.panTilt }));
+          } catch (err) {
+            console.error("Error sending Pan-Tilt code:", err);
+          }
+        } else if (data.type === "set-pin" && espButton) {
+          const { pin } = data;
+          console.log(`Setting pin ${pin}`);
+          // Send command to ESP
+          espButton.send(JSON.stringify({ pin }));
+          // Notify frontend of updated pin state
+        } else if (data?.temperature && frontendSocket) {
+          console.log("else");
+          console.log(data);
+
+          frontendSocket?.send(JSON.stringify({ type: "sensor", data: data }));
         }
       }
     } catch (err) {
       console.error("Error processing message:", err);
-      // frontendSocket.send(message);
     }
   });
 
-  // Handle disconnection
   socket.on("close", () => {
     if (socket === espSocket) {
       console.log("ESP module disconnected");
@@ -75,55 +106,25 @@ wss.on("connection", (socket, req) => {
     } else if (socket === frontendSocket) {
       console.log("Frontend disconnected");
       frontendSocket = null;
+    } else if (socket === espPanTiltSocket) {
+      console.log("Pan-Tilt ESP disconnected");
+      espPanTiltSocket = null;
+    } else if (socket === espButton) {
+      console.log("Button ESP disconnected");
+      espButton = null;
     }
+  });
+
+  socket.on("error", (err) => {
+    console.error("Error with WebSocket:", err);
   });
 });
 
-// Endpoint to check server health
-app.get("/", (req, res) => res.send("WebSocket server running!"));
+// Handle uncaught exceptions
+process.on("uncaughtException", (err) => {
+  console.error("Uncaught exception:", err);
+});
 
-// Start the HTTP server
-const PORT = 5000;
-app.listen(PORT, () => console.log(`HTTP server running on port ${PORT}`));
-
-// const express = require("express");
-// const WebSocket = require("ws");
-// const cors = require("cors");
-// const app = express();
-// const PORT = 5800;
-// app.use(cors());
-// // Serve the frontend
-// app.use(express.static("public"));
-
-// // Create a WebSocket server
-// const wss = new WebSocket.Server({ noServer: true });
-// app.get("/", (req, res) => {
-//   return res.send("welcome");
-// });
-// wss.on("connection", (ws) => {
-//   console.log("WebSocket client connected");
-
-//   // Broadcast incoming image data to all clients
-//   ws.on("message", (data) => {
-//     wss.clients.forEach((client) => {
-//       if (client.readyState === WebSocket.OPEN) {
-//         client.send(data); // Forward the image data
-//       }
-//     });
-//   });
-
-//   ws.on("close", () => {
-//     console.log("WebSocket client disconnected");
-//   });
-// });
-
-// // Handle WebSocket upgrade requests
-// const server = app.listen(PORT, () => {
-//   console.log(`Server running at http://localhost:${PORT}`);
-// });
-
-// server.on("upgrade", (request, socket, head) => {
-//   wss.handleUpgrade(request, socket, head, (ws) => {
-//     wss.emit("connection", ws, request);
-//   });
-// });
+process.on("unhandledRejection", (err) => {
+  console.error("Unhandled promise rejection:", err);
+});
